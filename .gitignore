@@ -1,0 +1,13 @@
+*~
+zkledger.test
+cmd/apl-bank/apl-bank
+cmd/apl-bank/keys
+cmd/apl-ledger/apl-ledger
+cmd/apl-auditor/apl-auditor
+cmd/apl-auditor/keys
+cmd/keygen/keygen
+cmd/keygen/keys
+*.byte
+*.exe
+*.out
+*.prof
