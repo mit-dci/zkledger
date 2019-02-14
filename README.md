@@ -5,7 +5,7 @@ zkLedger is a design for a ledger which has private transactions, but supports p
 Maybe you'd like to run the tests:
 
 ```
-cd $GOPATH/src/github.com/mit-dci/apl
+cd $GOPATH/src/github.com/mit-dci/zkledger
 go test
 ```
 
@@ -14,6 +14,7 @@ Or, run a local experiment with a few banks, a single-server ledger, and an audi
 
 ```
 cd cmd/setup
+go build
 ./setup -t simple1
 ```
 

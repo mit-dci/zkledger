@@ -26,6 +26,10 @@ This directory contains the control infrastructure to actually run a zkLedger in
 
 To run experiments, `setup/` contains a testing harness for local and remote tests.
 
-- `main.go`: contains preset tests (e.g. r50TX_herf where every bank you pass in performs 50 transactions and at the end the Herfindahl index is calculated between them) but also has the flexibility to insert others. It also takes in parameters to for a remote testing setup.
+- `main.go`: contains preset tests (e.g. r50TX_herf where every bank
+  you pass in performs 50 transactions and at the end the Herfindahl
+  index is calculated between them) but also has the flexibility to
+  insert others. It also can execute tests when servers are on
+  different machines.
 - `apl_env.go`: contains methods to create the environment for zkLedger to execute, either locally or remotely. 
 - `keys/`: **DO NOT USE THESE IN PRODUCTION ENVIRONMENTS** contains a collection of 50 bank public/private key pairs for testing. 
