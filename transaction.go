@@ -1,4 +1,4 @@
-package zkledger
+package apl
 
 import (
 	"flag"
@@ -6,6 +6,8 @@ import (
 	"math/big"
 	"runtime"
 	"time"
+
+	"github.com/mit-dci/zksigma"
 )
 
 type TXN_TYPE int
@@ -21,20 +23,20 @@ var reduce = flag.Bool("re", false, "Reduce size of transactions by setting tran
 
 type Entry struct {
 	Bank    int
-	Comm    ECPoint  // A_i
-	RToken  ECPoint  // B_i
-	V       *big.Int // unencrypted value for testing and issuance/withdrawal
-	R       *big.Int // value for testing
-	CommAux ECPoint  // cm_{aux,i},
-	BAux    ECPoint  // B_{aux,i} g^v*h^r'
+	Comm    zksigma.ECPoint // A_i
+	RToken  zksigma.ECPoint // B_i
+	V       *big.Int        // unencrypted value for testing and issuance/withdrawal
+	R       *big.Int        // value for testing
+	CommAux zksigma.ECPoint // cm_{aux,i},
+	BAux    zksigma.ECPoint // B_{aux,i} g^v*h^r'
 	// Proof of well-formedness (r_i's match, v is 0 or I know sk)
 	//WellFormed      EquivORLogProof // "I know x st x = log_h(A_i) = log_{pk_i}(B_i) OR I know y st y = log_h(pk_i)"
-	CommConsistency *ConsistencyProof
-	AuxConsistency  *ConsistencyProof
-	Assets          *DisjunctiveGSPFSProof // "cm_{aux,i}~\sum{cm_col} OR cm_{aux,i}~cm_i"
-	RP              *RangeProof            // cm_{aux,i} >= 0
-	BAuxR           *big.Int               // Intermediately hold r here so I can generate the Range Proof outside of createLocal (holding the lock in ledger)
-	SKProof         *GSPFSProof            // Proof of knowledge of SK for issuance (issuer) or withdrawal (Bank)
+	CommConsistency *zksigma.ConsistencyProof
+	AuxConsistency  *zksigma.ConsistencyProof
+	Assets          *zksigma.DisjunctiveProof // "cm_{aux,i}~\sum{cm_col} OR cm_{aux,i}~cm_i"
+	RP              *zksigma.RangeProof       // cm_{aux,i} >= 0
+	BAuxR           *big.Int                  // Intermediately hold r here so I can generate the Range Proof outside of createLocal (holding the lock in ledger)
+	SKProof         *zksigma.GSPFSProof       // Proof of knowledge of SK for issuance (issuer) or withdrawal (Bank)
 }
 
 // Well-formedness
@@ -84,41 +86,48 @@ func (e *EncryptedTransaction) print_decrypted() {
 	Dprintf("}\n")
 }
 
-func (en *Entry) verify(pks []ECPoint, CommCache ECPoint, RTokenCache ECPoint, eidx int, i int, debug string) bool {
+func (en *Entry) verify(pks []zksigma.ECPoint, CommCache zksigma.ECPoint, RTokenCache zksigma.ECPoint, eidx int, i int, debug string) bool {
 	// Check consistency proofs
-	if !VerifyConsistency(en.Comm, en.RToken, pks[i], en.CommConsistency) {
+	ok, err := en.CommConsistency.Verify(en.Comm, en.RToken, pks[i])
+	if !ok {
 		Dprintf(" [%v] ETX %v Failed verify consistency comm entry %v %#v\n", debug, eidx, i, en)
+		Dprintf("  [%v] %s", debug, err.Error())
 		return false
 	}
-	if !VerifyConsistency(en.CommAux, en.BAux, pks[i], en.AuxConsistency) {
+	ok, err = en.AuxConsistency.Verify(en.CommAux, en.BAux, pks[i])
+	if !ok {
 		Dprintf(" [%v] ETX %v Failed verify consistency aux entry %v\n", debug, eidx, i)
+		Dprintf("  [%v] %s", debug, err.Error())
 		return false
 	}
 	// Check Proof of Assets
 	Base1 := en.CommAux.Add(CommCache.Add(en.Comm).Neg())
 	Result1 := en.BAux.Add(RTokenCache.Add(en.RToken).Neg())
 	Result2 := en.CommAux.Add(en.Comm.Neg())
-	if !VerifyDisjunctive(Base1, Result1, EC.H, Result2, en.Assets) {
+	ok, err = en.Assets.Verify(Base1, Result1, zksigma.ZKCurve.H, Result2)
+	if !ok {
 		fmt.Printf("  [%v] %v/%v Base1: %v\n", debug, eidx, i, Base1)
 		fmt.Printf("  [%v] %v/%v Result1: %v\n", debug, eidx, i, Result1)
 		fmt.Printf("  [%v] %v/%v Result2: %v\n", debug, eidx, i, Result2)
 		fmt.Printf("  [%v] ETX %v Failed verify left side of proof of assets entry %v\n", debug, eidx, i)
+		fmt.Printf("  [%v] %s", debug, err.Error())
 		return false
 	}
 	//   Range Proof
-	if !RangeProverVerify(en.CommAux, en.RP) {
+	ok, err = en.RP.Verify(en.CommAux)
+	if !ok {
 		Dprintf("  [%v] %v/%v Range Proof: %v\n", debug, eidx, i, en.RP)
 		Dprintf("  [%v] ETX %v Failed verify the range proof on CommAux %v\n", debug, eidx, i)
+		Dprintf("  [%v] %s", debug, err.Error())
 		return false
 	}
 	return true
 }
 
-func (e *EncryptedTransaction) Verify(pks []ECPoint, CommCache []ECPoint, RTokenCache []ECPoint, debug string) bool {
+func (e *EncryptedTransaction) Verify(pks []zksigma.ECPoint, CommCache []zksigma.ECPoint, RTokenCache []zksigma.ECPoint, debug string) bool {
 	if e.skipVerify {
 		return true
 	}
-	g := GSPFS{curve: EC.C, ExponentPrime: EC.N, Generator: EC.H}
 	// Issuance
 	if e.Type == Issuance {
 		en := &e.Entries[e.Sender]
@@ -128,7 +137,12 @@ func (e *EncryptedTransaction) Verify(pks []ECPoint, CommCache []ECPoint, RToken
 			return false
 		}
 		// Check proof of knowledge of sk_{asset issuer}
-		if !g.Verify(pks[len(pks)-1], en.SKProof) {
+		// TODO: Error handling
+		ok := false
+		if en.SKProof != nil {
+			ok, _ = en.SKProof.Verify(pks[len(pks)-1])
+		}
+		if !ok {
 			Dprintf("[%v] ETX %v Failed issuance: proof of knowledge of SK\n", debug, e.Index)
 			return false
 		}
@@ -143,7 +157,8 @@ func (e *EncryptedTransaction) Verify(pks []ECPoint, CommCache []ECPoint, RToken
 			return false
 		}
 		// Check proof of knowledge of sk_{bank}
-		if !g.Verify(pks[e.Sender], en.SKProof) {
+		ok, _ := en.SKProof.Verify(pks[e.Sender])
+		if !ok {
 			Dprintf(" [%v] ETX %v Failed withdrawal: proof of knowledge of SK\n", debug, e.Index)
 			return false
 		}
@@ -152,10 +167,10 @@ func (e *EncryptedTransaction) Verify(pks []ECPoint, CommCache []ECPoint, RToken
 	// Transfer
 
 	if (len(pks) - 1) != len(e.Entries) { // we subtract 1 from len(pks) because the last entry is the issuer's key
-		fmt.Println("Length pks: %v, length entries: %v\n", len(pks)-1, len(e.Entries))
+		fmt.Printf("Length pks: %v, length entries: %v\n", len(pks)-1, len(e.Entries))
 		panic("invalid sizes")
 	}
-	commitmentSum := EC.Zero()
+	commitmentSum := zksigma.Zero
 	rets := make(chan bool)
 	for i := 0; i < len(e.Entries); i++ {
 		en := &e.Entries[i]
