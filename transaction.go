@@ -88,23 +88,23 @@ func (e *EncryptedTransaction) print_decrypted() {
 
 func (en *Entry) verify(pks []zksigma.ECPoint, CommCache zksigma.ECPoint, RTokenCache zksigma.ECPoint, eidx int, i int, debug string) bool {
 	// Check consistency proofs
-	ok, err := en.CommConsistency.Verify(en.Comm, en.RToken, pks[i])
+	ok, err := en.CommConsistency.Verify(ZKLedgerCurve, en.Comm, en.RToken, pks[i])
 	if !ok {
 		Dprintf(" [%v] ETX %v Failed verify consistency comm entry %v %#v\n", debug, eidx, i, en)
 		Dprintf("  [%v] %s", debug, err.Error())
 		return false
 	}
-	ok, err = en.AuxConsistency.Verify(en.CommAux, en.BAux, pks[i])
+	ok, err = en.AuxConsistency.Verify(ZKLedgerCurve, en.CommAux, en.BAux, pks[i])
 	if !ok {
 		Dprintf(" [%v] ETX %v Failed verify consistency aux entry %v\n", debug, eidx, i)
 		Dprintf("  [%v] %s", debug, err.Error())
 		return false
 	}
 	// Check Proof of Assets
-	Base1 := en.CommAux.Add(CommCache.Add(en.Comm).Neg())
-	Result1 := en.BAux.Add(RTokenCache.Add(en.RToken).Neg())
-	Result2 := en.CommAux.Add(en.Comm.Neg())
-	ok, err = en.Assets.Verify(Base1, Result1, zksigma.ZKCurve.H, Result2)
+	Base1 := en.CommAux.Add(CommCache.Add(en.Comm, ZKLedgerCurve).Neg(ZKLedgerCurve), ZKLedgerCurve)
+	Result1 := en.BAux.Add(RTokenCache.Add(en.RToken, ZKLedgerCurve).Neg(ZKLedgerCurve), ZKLedgerCurve)
+	Result2 := en.CommAux.Add(en.Comm.Neg(ZKLedgerCurve), ZKLedgerCurve)
+	ok, err = en.Assets.Verify(ZKLedgerCurve, Base1, Result1, ZKLedgerCurve.H, Result2)
 	if !ok {
 		fmt.Printf("  [%v] %v/%v Base1: %v\n", debug, eidx, i, Base1)
 		fmt.Printf("  [%v] %v/%v Result1: %v\n", debug, eidx, i, Result1)
@@ -114,7 +114,7 @@ func (en *Entry) verify(pks []zksigma.ECPoint, CommCache zksigma.ECPoint, RToken
 		return false
 	}
 	//   Range Proof
-	ok, err = en.RP.Verify(en.CommAux)
+	ok, err = en.RP.Verify(ZKLedgerCurve, en.CommAux)
 	if !ok {
 		Dprintf("  [%v] %v/%v Range Proof: %v\n", debug, eidx, i, en.RP)
 		Dprintf("  [%v] ETX %v Failed verify the range proof on CommAux %v\n", debug, eidx, i)
@@ -131,6 +131,7 @@ func (e *EncryptedTransaction) Verify(pks []zksigma.ECPoint, CommCache []zksigma
 	// Issuance
 	if e.Type == Issuance {
 		en := &e.Entries[e.Sender]
+		e.print_decrypted()
 		if en.V.Cmp(big.NewInt(0)) <= 0 {
 			Dprintf(" [%v] ETX %v Failed verify; issuance transaction values must be positive\n",
 				debug, e.Index)
@@ -140,7 +141,7 @@ func (e *EncryptedTransaction) Verify(pks []zksigma.ECPoint, CommCache []zksigma
 		// TODO: Error handling
 		ok := false
 		if en.SKProof != nil {
-			ok, _ = en.SKProof.Verify(pks[len(pks)-1])
+			ok, _ = en.SKProof.Verify(ZKLedgerCurve, pks[len(pks)-1])
 		}
 		if !ok {
 			Dprintf("[%v] ETX %v Failed issuance: proof of knowledge of SK\n", debug, e.Index)
@@ -157,7 +158,7 @@ func (e *EncryptedTransaction) Verify(pks []zksigma.ECPoint, CommCache []zksigma
 			return false
 		}
 		// Check proof of knowledge of sk_{bank}
-		ok, _ := en.SKProof.Verify(pks[e.Sender])
+		ok, _ := en.SKProof.Verify(ZKLedgerCurve, pks[e.Sender])
 		if !ok {
 			Dprintf(" [%v] ETX %v Failed withdrawal: proof of knowledge of SK\n", debug, e.Index)
 			return false
@@ -174,7 +175,7 @@ func (e *EncryptedTransaction) Verify(pks []zksigma.ECPoint, CommCache []zksigma
 	rets := make(chan bool)
 	for i := 0; i < len(e.Entries); i++ {
 		en := &e.Entries[i]
-		commitmentSum = commitmentSum.Add(en.Comm)
+		commitmentSum = commitmentSum.Add(en.Comm, ZKLedgerCurve)
 		if en.Bank != i {
 			Dprintf(" [%v] ETX %v Failed verify mismatching bank %#v\n", debug, e.Index, en)
 			return false

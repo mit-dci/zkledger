@@ -108,7 +108,7 @@ func TestBanksWithTransaction(t *testing.T) {
 	if !ok {
 		t.Fatalf("Bank 1 should have index 1 transaction %v\n", s.B[1].transactions)
 	}
-	if !zksigma.VerifyR(rt, s.B[1].pki.Get(1), tx.r) {
+	if !zksigma.VerifyR(ZKLedgerCurve, rt, s.B[1].pki.Get(1), tx.r) {
 		t.Errorf("Bad RToken %v\n", rt)
 	} else {
 		fmt.Printf("Passed TestBanksWithTransaction\n")
@@ -398,9 +398,9 @@ func benchmarkCreateLocalTxn(bnum int, b *testing.B) {
 
 func BenchmarkUpdateCommCache(b *testing.B) {
 	value := new(big.Int).SetInt64(50)
-	comm, _, _ := zksigma.PedCommit(value)
+	comm, _, _ := zksigma.PedCommit(ZKLedgerCurve, value)
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		comm = comm.Add(comm)
+		comm = comm.Add(comm, ZKLedgerCurve)
 	}
 }

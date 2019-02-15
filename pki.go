@@ -30,7 +30,7 @@ func (p *PKI) MakeTest(n int) {
 	p.PK = make([]zksigma.ECPoint, n+1)
 	p.SK = make([]*big.Int, n+1)
 	for i := 0; i < n+1; i++ {
-		p.PK[i], p.SK[i] = zksigma.KeyGen()
+		p.PK[i], p.SK[i] = zksigma.KeyGen(ZKLedgerCurve.C, ZKLedgerCurve.H)
 	}
 	//	p.saveKeys()
 }
