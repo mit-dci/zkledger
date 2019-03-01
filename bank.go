@@ -525,12 +525,12 @@ func (b *Bank) createLocal(etx *EncryptedTransaction, bank_j int, value *big.Int
 
 			// items for simulated proof
 			b.mu.Lock()
-			SA := b.CommsCache[i].Add(etx.Entries[i].Comm, ZKLedgerCurve)
-			SB := b.RTokenCache[i].Add(rtoken, ZKLedgerCurve)
+			SA := ZKLedgerCurve.Add(b.CommsCache[i], etx.Entries[i].Comm)
+			SB := ZKLedgerCurve.Add(b.RTokenCache[i], rtoken)
 			b.mu.Unlock()
-			Base1 := commaux.Add(SA.Neg(ZKLedgerCurve), ZKLedgerCurve) // Base1 = CommAux - (\Sum_{i=0}^{n-1} CM_i + CM_n)
-			Result1 := baux.Add(SB.Neg(ZKLedgerCurve), ZKLedgerCurve)  // Result1 = Baux - SB
-			Result2 := commaux.Add(etx.Entries[i].Comm.Neg(ZKLedgerCurve), ZKLedgerCurve)
+			Base1 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(SA)) // Base1 = CommAux - (\Sum_{i=0}^{n-1} CM_i + CM_n)
+			Result1 := ZKLedgerCurve.Add(baux, ZKLedgerCurve.Neg(SB))  // Result1 = Baux - SB
+			Result2 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(etx.Entries[i].Comm))
 
 			// TODO: Error handling
 			etx.Entries[i].Assets, _ = zksigma.NewDisjunctiveProof(ZKLedgerCurve, Base1, Result1, ZKLedgerCurve.H, Result2, rpmr, 1)
@@ -564,15 +564,15 @@ func (b *Bank) createLocal(etx *EncryptedTransaction, bank_j int, value *big.Int
 			// structures have been updated from the n-1th
 			// transaction, because I should have been stuck in the wait()
 
-			SA := b.CommsCache[i].Add(etx.Entries[i].Comm, ZKLedgerCurve) // SA = n-1 sum + curSum
-			SB := b.RTokenCache[i].Add(rtoken, ZKLedgerCurve)             //SB = n-1 sum + current rtoken
+			SA := ZKLedgerCurve.Add(b.CommsCache[i], etx.Entries[i].Comm) // SA = n-1 sum + curSum
+			SB := ZKLedgerCurve.Add(b.RTokenCache[i], rtoken)             //SB = n-1 sum + current rtoken
 			b.mu.Unlock()
 
 			commaux = zksigma.PedCommitR(ZKLedgerCurve, sum, rp)
 			etx.Entries[i].CommAux = commaux
-			Base1 := commaux.Add(SA.Neg(ZKLedgerCurve), ZKLedgerCurve)
-			Result1 := baux.Add(SB.Neg(ZKLedgerCurve), ZKLedgerCurve) // Result1 = commaux - (sum of entries)
-			Result2 := commaux.Add(etx.Entries[i].Comm.Neg(ZKLedgerCurve), ZKLedgerCurve)
+			Base1 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(SA))
+			Result1 := ZKLedgerCurve.Add(baux, ZKLedgerCurve.Neg(SB)) // Result1 = commaux - (sum of entries)
+			Result2 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(etx.Entries[i].Comm))
 
 			// TODO: Error handling
 			etx.Entries[i].Assets, _ = zksigma.NewDisjunctiveProof(ZKLedgerCurve, Base1, Result1, ZKLedgerCurve.H, Result2, b.pki.GetSK(b.id), 0)
@@ -612,12 +612,12 @@ func (b *Bank) createLocal(etx *EncryptedTransaction, bank_j int, value *big.Int
 			rpmr.Mod(rpmr, ZKLedgerCurve.C.Params().N)
 
 			b.mu.Lock()
-			SA := b.CommsCache[i].Add(etx.Entries[i].Comm, ZKLedgerCurve)
-			SB := b.RTokenCache[i].Add(rtoken, ZKLedgerCurve)
+			SA := ZKLedgerCurve.Add(b.CommsCache[i], etx.Entries[i].Comm)
+			SB := ZKLedgerCurve.Add(b.RTokenCache[i], rtoken)
 			b.mu.Unlock()
-			Base1 := commaux.Add(SA.Neg(ZKLedgerCurve), ZKLedgerCurve)
-			Result1 := baux.Add(SB.Neg(ZKLedgerCurve), ZKLedgerCurve)
-			Result2 := commaux.Add(etx.Entries[i].Comm.Neg(ZKLedgerCurve), ZKLedgerCurve)
+			Base1 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(SA))
+			Result1 := ZKLedgerCurve.Add(baux, ZKLedgerCurve.Neg(SB))
+			Result2 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(etx.Entries[i].Comm))
 
 			// TODO: Error handling
 			etx.Entries[i].Assets, _ = zksigma.NewDisjunctiveProof(ZKLedgerCurve, Base1, Result1, ZKLedgerCurve.H, Result2, rpmr, 1)
@@ -666,8 +666,8 @@ func (b *Bank) updateLocalData(etx *EncryptedTransaction) {
 		b.local_ledger.add(etx)
 		if etx.Type == Transfer {
 			for i := 0; i < b.num; i++ {
-				b.RTokenCache[i] = b.RTokenCache[i].Add(etx.Entries[i].RToken, ZKLedgerCurve)
-				b.CommsCache[i] = b.CommsCache[i].Add(etx.Entries[i].Comm, ZKLedgerCurve)
+				b.RTokenCache[i] = ZKLedgerCurve.Add(b.RTokenCache[i], etx.Entries[i].RToken)
+				b.CommsCache[i] = ZKLedgerCurve.Add(b.CommsCache[i], etx.Entries[i].Comm)
 			}
 			req, ok := b.StoreRequests[etx.Index]
 			if !ok {
@@ -678,8 +678,8 @@ func (b *Bank) updateLocalData(etx *EncryptedTransaction) {
 		} else if etx.Type == Issuance || etx.Type == Withdrawal {
 			// Only one bank
 			en := &etx.Entries[etx.Sender]
-			gval := ZKLedgerCurve.G.Mult(en.V, ZKLedgerCurve)
-			b.CommsCache[etx.Sender] = b.CommsCache[etx.Sender].Add(gval, ZKLedgerCurve)
+			gval := ZKLedgerCurve.Mult(ZKLedgerCurve.G, en.V)
+			b.CommsCache[etx.Sender] = ZKLedgerCurve.Add(b.CommsCache[etx.Sender], gval)
 		}
 	}
 	// Processed transaction etx.Index, signal whoever might be waiting for it.
@@ -753,18 +753,18 @@ func (b *Bank) answerSum() (*big.Int, *zksigma.EquivalenceProof) {
 		for i := 0; i < len(b.local_ledger.Transactions); i++ {
 			etx := &b.local_ledger.Transactions[i]
 			if etx.Type == Transfer {
-				total_comms = total_comms.Add(etx.Entries[b.id].Comm, ZKLedgerCurve)
-				total_rtoken = total_rtoken.Add(etx.Entries[b.id].RToken, ZKLedgerCurve)
+				total_comms = ZKLedgerCurve.Add(total_comms, etx.Entries[b.id].Comm)
+				total_rtoken = ZKLedgerCurve.Add(total_rtoken, etx.Entries[b.id].RToken)
 			} else if (etx.Type == Issuance || etx.Type == Withdrawal) && etx.Sender == b.id {
-				gval := ZKLedgerCurve.G.Mult(etx.Entries[etx.Sender].V, ZKLedgerCurve)
-				total_comms = total_comms.Add(gval, ZKLedgerCurve)
+				gval := ZKLedgerCurve.Mult(ZKLedgerCurve.G, etx.Entries[etx.Sender].V)
+				total_comms = ZKLedgerCurve.Add(total_comms, gval)
 			}
 		}
 	}
 	b.print_transactions()
 	b.mu.Unlock()
-	gv := ZKLedgerCurve.G.Mult(total_clear, ZKLedgerCurve).Neg(ZKLedgerCurve) // 1 / g^\sum{v_i}
-	T := total_comms.Add(gv, ZKLedgerCurve)                                   // should be h^r
+	gv := ZKLedgerCurve.Neg(ZKLedgerCurve.Mult(ZKLedgerCurve.G, total_clear)) // 1 / g^\sum{v_i}
+	T := ZKLedgerCurve.Add(total_comms, gv)                                   // should be h^r
 	Dprintf("[%v]  Audit:\n", b.id)
 	Dprintf("[%v]       \\sum{v_i}: %v\n", b.id, total_clear)
 	Dprintf("[%v]  1 /g^\\sum{v_i}: %v\n", b.id, gv)

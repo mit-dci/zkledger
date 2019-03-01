@@ -123,7 +123,7 @@ func (p *PKI) loadPKI(n int) ([]zksigma.ECPoint, []*big.Int, error) {
 	}
 
 	if keysFound != n+1 {
-		Dprintf("Key files not found for all the banks! Dumping pk map:", pk)
+		Dprintf("Key files not found for all the banks! Dumping pk map: %v", pk)
 	}
 
 	return pk, sk, nil

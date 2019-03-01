@@ -401,6 +401,6 @@ func BenchmarkUpdateCommCache(b *testing.B) {
 	comm, _, _ := zksigma.PedCommit(ZKLedgerCurve, value)
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		comm = comm.Add(comm, ZKLedgerCurve)
+		comm = ZKLedgerCurve.Add(comm, comm)
 	}
 }

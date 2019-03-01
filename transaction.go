@@ -101,9 +101,9 @@ func (en *Entry) verify(pks []zksigma.ECPoint, CommCache zksigma.ECPoint, RToken
 		return false
 	}
 	// Check Proof of Assets
-	Base1 := en.CommAux.Add(CommCache.Add(en.Comm, ZKLedgerCurve).Neg(ZKLedgerCurve), ZKLedgerCurve)
-	Result1 := en.BAux.Add(RTokenCache.Add(en.RToken, ZKLedgerCurve).Neg(ZKLedgerCurve), ZKLedgerCurve)
-	Result2 := en.CommAux.Add(en.Comm.Neg(ZKLedgerCurve), ZKLedgerCurve)
+	Base1 := ZKLedgerCurve.Add(en.CommAux, ZKLedgerCurve.Neg(ZKLedgerCurve.Add(CommCache, en.Comm)))
+	Result1 := ZKLedgerCurve.Add(en.BAux, ZKLedgerCurve.Neg(ZKLedgerCurve.Add(RTokenCache, en.RToken)))
+	Result2 := ZKLedgerCurve.Add(en.CommAux, ZKLedgerCurve.Neg(en.Comm))
 	ok, err = en.Assets.Verify(ZKLedgerCurve, Base1, Result1, ZKLedgerCurve.H, Result2)
 	if !ok {
 		fmt.Printf("  [%v] %v/%v Base1: %v\n", debug, eidx, i, Base1)
@@ -175,7 +175,7 @@ func (e *EncryptedTransaction) Verify(pks []zksigma.ECPoint, CommCache []zksigma
 	rets := make(chan bool)
 	for i := 0; i < len(e.Entries); i++ {
 		en := &e.Entries[i]
-		commitmentSum = commitmentSum.Add(en.Comm, ZKLedgerCurve)
+		commitmentSum = ZKLedgerCurve.Add(commitmentSum, en.Comm)
 		if en.Bank != i {
 			Dprintf(" [%v] ETX %v Failed verify mismatching bank %#v\n", debug, e.Index, en)
 			return false
