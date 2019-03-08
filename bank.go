@@ -109,8 +109,8 @@ func MakeBank(id int, num int, l LedgerClient, pki *PKI) *Bank {
 	close(c)
 
 	for i := 0; i < num; i++ {
-		b.CommsCache[i] = zksigma.ECPoint{big.NewInt(0), big.NewInt(0)}
-		b.RTokenCache[i] = zksigma.ECPoint{big.NewInt(0), big.NewInt(0)}
+		b.CommsCache[i] = zksigma.Zero
+		b.RTokenCache[i] = zksigma.Zero
 	}
 	go b.start()
 	return b
@@ -392,7 +392,6 @@ func generateRangeProofs(num int, etx *EncryptedTransaction, bank_j int, id int,
 			etx.Entries[i].RP, etx.Entries[i].BAuxR, _ = zksigma.NewRangeProof(ZKLedgerCurve, value)
 		} else {
 			// TODO: Error handling
-
 			etx.Entries[i].RP, etx.Entries[i].BAuxR, _ = zksigma.NewRangeProof(ZKLedgerCurve, big.NewInt(0))
 		}
 	}

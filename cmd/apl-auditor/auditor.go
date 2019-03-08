@@ -141,6 +141,7 @@ func main() {
 		if *testName == "h" {
 			for i := 0; i < 20; i++ {
 				start = time.Now()
+				// TODO: Error handling
 				x, _ := auditor.Herfindahl(true, nil)
 				times[i] = time.Since(start)
 				total += times[i]
@@ -183,6 +184,7 @@ func main() {
 		total = 0
 		for i := 0; i < 20; i++ {
 			start = time.Now()
+			// TODO: Error handling
 			x, _ := auditor.Herfindahl(false, nil)
 			times[i] = time.Since(start)
 			total += times[i]

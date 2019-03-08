@@ -185,6 +185,7 @@ func (a *Auditor) computeSum(bank_i int) (*big.Int, bool) {
 	a.mu.Unlock()
 	gv := ZKLedgerCurve.Neg(ZKLedgerCurve.Mult(ZKLedgerCurve.G, rep.Sum)) // 1 / g^\sum{v_i}
 	T := ZKLedgerCurve.Add(comms, gv)
+	// TODO: Error handling
 	verifies, _ := rep.Eproof.Verify(ZKLedgerCurve, T, rtokens, ZKLedgerCurve.H, a.pki.Get(bank_i))
 	if !verifies {
 		Dprintf("[A] Bank %v proof didn't verify! Their total: %v\n", bank_i, rep.Sum)
@@ -219,6 +220,7 @@ func (a *Auditor) sumOneBank(wg *sync.WaitGroup, bank_i int, totals []*big.Int, 
 	}
 	gv := ZKLedgerCurve.Neg(ZKLedgerCurve.Mult(ZKLedgerCurve.G, rep.Sum)) // 1 / g^\sum{v_i}
 	T := ZKLedgerCurve.Add(comms, gv)
+	// TODO: Error handling
 	verifies, _ := rep.Eproof.Verify(ZKLedgerCurve, T, rtokens, ZKLedgerCurve.H, a.pki.Get(bank_i))
 	if !verifies {
 		Dprintf("[A] Bank %v proof didn't verify! Their total: %v\n", bank_i, rep.Sum)

@@ -131,16 +131,15 @@ func (e *EncryptedTransaction) Verify(pks []zksigma.ECPoint, CommCache []zksigma
 	// Issuance
 	if e.Type == Issuance {
 		en := &e.Entries[e.Sender]
-		e.print_decrypted()
 		if en.V.Cmp(big.NewInt(0)) <= 0 {
 			Dprintf(" [%v] ETX %v Failed verify; issuance transaction values must be positive\n",
 				debug, e.Index)
 			return false
 		}
 		// Check proof of knowledge of sk_{asset issuer}
-		// TODO: Error handling
 		ok := false
 		if en.SKProof != nil {
+			// TODO: Error handling
 			ok, _ = en.SKProof.Verify(ZKLedgerCurve, pks[len(pks)-1])
 		}
 		if !ok {
@@ -158,6 +157,7 @@ func (e *EncryptedTransaction) Verify(pks []zksigma.ECPoint, CommCache []zksigma
 			return false
 		}
 		// Check proof of knowledge of sk_{bank}
+		// TODO: Error handling
 		ok, _ := en.SKProof.Verify(ZKLedgerCurve, pks[e.Sender])
 		if !ok {
 			Dprintf(" [%v] ETX %v Failed withdrawal: proof of knowledge of SK\n", debug, e.Index)
