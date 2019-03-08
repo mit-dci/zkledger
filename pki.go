@@ -8,14 +8,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/mit-dci/zksigma"
 )
 
 type PKI struct {
-	PK []ECPoint
+	PK []zksigma.ECPoint
 	SK []*big.Int
 }
 
-func (p *PKI) Get(i int) ECPoint {
+func (p *PKI) Get(i int) zksigma.ECPoint {
 	return p.PK[i]
 }
 
@@ -25,10 +27,10 @@ func (p *PKI) GetSK(i int) *big.Int {
 
 // n is the number of banks. We create n+1 keys for issuers
 func (p *PKI) MakeTest(n int) {
-	p.PK = make([]ECPoint, n+1)
+	p.PK = make([]zksigma.ECPoint, n+1)
 	p.SK = make([]*big.Int, n+1)
 	for i := 0; i < n+1; i++ {
-		p.PK[i], p.SK[i] = EC.KeyGen()
+		p.PK[i], p.SK[i] = zksigma.KeyGen(ZKLedgerCurve.C, ZKLedgerCurve.H)
 	}
 	//	p.saveKeys()
 }
@@ -40,8 +42,8 @@ func (p *PKI) MakeTestWithKeys(n int) {
 }
 
 // load PKI takes in the number of banks in a system. Note that the issuer key is located at location n+1
-func (p *PKI) loadPKI(n int) ([]ECPoint, []*big.Int, error) {
-	pk := make([]ECPoint, n+1)
+func (p *PKI) loadPKI(n int) ([]zksigma.ECPoint, []*big.Int, error) {
+	pk := make([]zksigma.ECPoint, n+1)
 	sk := make([]*big.Int, n+1)
 
 	// get working directory
@@ -90,7 +92,7 @@ func (p *PKI) loadPKI(n int) ([]ECPoint, []*big.Int, error) {
 
 			// set it to the correct role, either issuer or bank
 			if content2[0] == "is" {
-				pk[n] = ECPoint{pkX, pkY}
+				pk[n] = zksigma.ECPoint{pkX, pkY}
 				keysFound += 1
 			} else {
 				bankid, err := strconv.Atoi(content2[0][1:]) // since it is of the format
@@ -98,7 +100,7 @@ func (p *PKI) loadPKI(n int) ([]ECPoint, []*big.Int, error) {
 				if bankid >= n { // ignore any keys that are greater than ours
 					continue
 				}
-				pk[bankid] = ECPoint{pkX, pkY}
+				pk[bankid] = zksigma.ECPoint{pkX, pkY}
 				keysFound += 1
 			}
 		} else if content2[1] == "sk" { // in real world setting there should only be 1 file
@@ -121,7 +123,7 @@ func (p *PKI) loadPKI(n int) ([]ECPoint, []*big.Int, error) {
 	}
 
 	if keysFound != n+1 {
-		Dprintf("Key files not found for all the banks! Dumping pk map:", pk)
+		Dprintf("Key files not found for all the banks! Dumping pk map: %v", pk)
 	}
 
 	return pk, sk, nil

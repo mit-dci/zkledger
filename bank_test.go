@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mit-dci/zksigma"
 )
 
 func TestSetupBanks(t *testing.T) {
@@ -106,8 +108,8 @@ func TestBanksWithTransaction(t *testing.T) {
 	if !ok {
 		t.Fatalf("Bank 1 should have index 1 transaction %v\n", s.B[1].transactions)
 	}
-	if !EC.VerifyR(rt, s.B[1].pki.Get(1), tx.r) {
-		t.Errorf("Bad RToken %v\n")
+	if !zksigma.VerifyR(ZKLedgerCurve, rt, s.B[1].pki.Get(1), tx.r) {
+		t.Errorf("Bad RToken %v\n", rt)
 	} else {
 		fmt.Printf("Passed TestBanksWithTransaction\n")
 	}
@@ -119,9 +121,9 @@ func TestOutOfOrderBanks(t *testing.T) {
 	b := s.B[0]
 	entries := make([]Entry, 2)
 	for i := 0; i < 2; i++ {
-		entries[i].CommAux = EC.Zero()
-		entries[i].Comm = EC.Zero()
-		entries[i].RToken = EC.Zero()
+		entries[i].CommAux = zksigma.Zero
+		entries[i].Comm = zksigma.Zero
+		entries[i].RToken = zksigma.Zero
 	}
 	b.Notify(&EncryptedTransaction{Index: 3, skipVerify: true, Entries: entries}, nil)
 	if b.lastSeen != 1 { // should have only seen issuance
@@ -222,7 +224,7 @@ func TestIssuance(t *testing.T) {
 	if en.V.Cmp(v) != 0 {
 		t.Errorf("Wrong amount %v\n", etx.Sender)
 	}
-	x := make([]ECPoint, 0)
+	x := make([]zksigma.ECPoint, 0)
 	if !etx.Verify(s.B[0].pki.PK, x, x, "") { // pass in the first banks public keys for now
 		t.Errorf("Didn't verify %v\n", etx)
 	} else {
@@ -242,7 +244,7 @@ func TestWithdrawal(t *testing.T) {
 	if en.V.Cmp(v) != 0 {
 		t.Errorf("Wrong amount %v\n", etx.Sender)
 	}
-	x := make([]ECPoint, 0)
+	x := make([]zksigma.ECPoint, 0)
 	if !etx.Verify(s.B[0].pki.PK, x, x, "") {
 		t.Errorf("Didn't verify %v\n", etx)
 	} else {
@@ -259,11 +261,11 @@ func TestVerifyTxn(t *testing.T) {
 	// send it to the ledger, which will cause each bank to process
 	// it, updating intermediate datastructures and no longer making
 	// it valid.
-	commsCache := make([]ECPoint, bnum)
-	rtokenCache := make([]ECPoint, bnum)
+	commsCache := make([]zksigma.ECPoint, bnum)
+	rtokenCache := make([]zksigma.ECPoint, bnum)
 	for i := 0; i < bnum; i++ {
-		commsCache[i] = ECPoint{big.NewInt(0).Set(s.B[0].CommsCache[i].X), big.NewInt(0).Set(s.B[0].CommsCache[i].Y)}
-		rtokenCache[i] = ECPoint{big.NewInt(0).Set(s.B[0].RTokenCache[i].X), big.NewInt(0).Set(s.B[0].RTokenCache[i].Y)}
+		commsCache[i] = zksigma.ECPoint{big.NewInt(0).Set(s.B[0].CommsCache[i].X), big.NewInt(0).Set(s.B[0].CommsCache[i].Y)}
+		rtokenCache[i] = zksigma.ECPoint{big.NewInt(0).Set(s.B[0].RTokenCache[i].X), big.NewInt(0).Set(s.B[0].RTokenCache[i].Y)}
 	}
 	etx := s.B[0].CreateEncryptedTransaction(1, big.NewInt(1))
 	v := etx.Verify(s.B[0].pki.PK, commsCache, rtokenCache, "")
@@ -305,11 +307,11 @@ func benchmarkVerify(bnum int, b *testing.B) {
 	// send it to the ledger, which will cause each bank to process
 	// it, updating intermediate datastructures and no longer making
 	// it valid.
-	commsCache := make([]ECPoint, bnum)
-	rtokenCache := make([]ECPoint, bnum)
+	commsCache := make([]zksigma.ECPoint, bnum)
+	rtokenCache := make([]zksigma.ECPoint, bnum)
 	for i := 0; i < bnum; i++ {
-		commsCache[i] = ECPoint{big.NewInt(0).Set(s.B[0].CommsCache[i].X), big.NewInt(0).Set(s.B[0].CommsCache[i].Y)}
-		rtokenCache[i] = ECPoint{big.NewInt(0).Set(s.B[0].RTokenCache[i].X), big.NewInt(0).Set(s.B[0].RTokenCache[i].Y)}
+		commsCache[i] = zksigma.ECPoint{big.NewInt(0).Set(s.B[0].CommsCache[i].X), big.NewInt(0).Set(s.B[0].CommsCache[i].Y)}
+		rtokenCache[i] = zksigma.ECPoint{big.NewInt(0).Set(s.B[0].RTokenCache[i].X), big.NewInt(0).Set(s.B[0].RTokenCache[i].Y)}
 	}
 	etx := s.B[0].CreateEncryptedTransaction(1, big.NewInt(1))
 	b.ResetTimer()
@@ -395,11 +397,11 @@ func benchmarkCreateLocalTxn(bnum int, b *testing.B) {
 }
 
 func BenchmarkUpdateCommCache(b *testing.B) {
-	pc := ECPedersen{EC.C, EC.G, EC.H}
 	value := new(big.Int).SetInt64(50)
-	comm, _ := pc.Commit(value)
+	// TODO: Error handling
+	comm, _, _ := zksigma.PedCommit(ZKLedgerCurve, value)
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		comm = EC.Add(comm, comm)
+		comm = ZKLedgerCurve.Add(comm, comm)
 	}
 }

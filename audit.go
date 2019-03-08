@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/rpc"
 	"sync"
+
+	"github.com/mit-dci/zksigma"
 )
 
 type Auditor struct {
@@ -18,8 +20,8 @@ type Auditor struct {
 	Done         chan bool
 	banks        []BankClient
 	pki          *PKI
-	CommsCache   []ECPoint
-	RTokenCache  []ECPoint
+	CommsCache   []zksigma.ECPoint
+	RTokenCache  []zksigma.ECPoint
 	Setup        chan struct{}
 }
 
@@ -34,11 +36,11 @@ func MakeAuditor(num int, pki *PKI) *Auditor {
 		pki:          pki,
 		Setup:        make(chan struct{}),
 	}
-	a.CommsCache = make([]ECPoint, a.num)
-	a.RTokenCache = make([]ECPoint, a.num)
+	a.CommsCache = make([]zksigma.ECPoint, a.num)
+	a.RTokenCache = make([]zksigma.ECPoint, a.num)
 	for i := 0; i < a.num; i++ {
-		a.CommsCache[i] = EC.Zero()
-		a.RTokenCache[i] = EC.Zero()
+		a.CommsCache[i] = zksigma.Zero
+		a.RTokenCache[i] = zksigma.Zero
 	}
 	go a.start()
 	return a
@@ -89,14 +91,14 @@ func (a *Auditor) register(hostname string, baseport int, bankHostnames []string
 func (a *Auditor) start() {
 	<-a.Setup
 	Dprintf("[A] Starting audit loop...\n")
-	var pks []ECPoint
+	var pks []zksigma.ECPoint
 	for {
 		select {
 		case etx := <-a.receivedTxns:
 			Dprintf("[A][%v]  Received txn...\n", etx.Index)
 			// Verify
 			if pks == nil {
-				pks = make([]ECPoint, a.num+1) // all the banks and the issuer
+				pks = make([]zksigma.ECPoint, a.num+1) // all the banks and the issuer
 				for i := 0; i < a.num+1; i++ {
 					pks[i] = a.pki.Get(i)
 				}
@@ -123,14 +125,14 @@ func (a *Auditor) start() {
 				if etx.Type == Transfer {
 					for i := 0; i < len(etx.Entries); i++ {
 						//Dprintf("[A]   Adding RToken %v...\n", etx.Entries[i].RToken)
-						a.RTokenCache[i] = a.RTokenCache[i].Add(etx.Entries[i].RToken)
-						a.CommsCache[i] = a.CommsCache[i].Add(etx.Entries[i].Comm)
+						a.RTokenCache[i] = ZKLedgerCurve.Add(a.RTokenCache[i], etx.Entries[i].RToken)
+						a.CommsCache[i] = ZKLedgerCurve.Add(a.CommsCache[i], etx.Entries[i].Comm)
 					}
 				} else if etx.Type == Issuance || etx.Type == Withdrawal {
 					// Only one bank for now
 					en := &etx.Entries[etx.Sender]
-					gval := EC.G.Mult(en.V)
-					a.CommsCache[etx.Sender] = EC.Add(a.CommsCache[etx.Sender], gval)
+					gval := ZKLedgerCurve.Mult(ZKLedgerCurve.G, en.V)
+					a.CommsCache[etx.Sender] = ZKLedgerCurve.Add(a.CommsCache[etx.Sender], gval)
 				}
 				Dprintf("[A][%v] Processed txn\n", etx.Index)
 				a.mu.Unlock()
@@ -162,8 +164,8 @@ func (a *Auditor) computeSum(bank_i int) (*big.Int, bool) {
 	Dprintf("[A] Auditing bank %v \n", bank_i)
 	var rep AuditRep
 	a.banks[bank_i].Audit(&struct{}{}, &rep)
-	comms := EC.Zero()
-	rtokens := EC.Zero()
+	comms := zksigma.Zero
+	rtokens := zksigma.Zero
 	a.mu.Lock()
 	if *useCache {
 		comms = a.CommsCache[bank_i]
@@ -172,18 +174,19 @@ func (a *Auditor) computeSum(bank_i int) (*big.Int, bool) {
 		for i := 0; i < len(a.local_ledger.Transactions); i++ {
 			etx := &a.local_ledger.Transactions[i]
 			if etx.Type == Transfer {
-				comms = EC.Add(comms, etx.Entries[bank_i].Comm)
-				rtokens = EC.Add(rtokens, etx.Entries[bank_i].RToken)
+				comms = ZKLedgerCurve.Add(comms, etx.Entries[bank_i].Comm)
+				rtokens = ZKLedgerCurve.Add(rtokens, etx.Entries[bank_i].RToken)
 			} else if (etx.Type == Issuance || etx.Type == Withdrawal) && etx.Sender == bank_i {
-				gval := EC.G.Mult(etx.Entries[etx.Sender].V)
-				comms = EC.Add(comms, gval)
+				gval := ZKLedgerCurve.Mult(ZKLedgerCurve.G, etx.Entries[etx.Sender].V)
+				comms = ZKLedgerCurve.Add(comms, gval)
 			}
 		}
 	}
 	a.mu.Unlock()
-	gv := EC.G.Mult(rep.Sum).Neg() // 1 / g^\sum{v_i}
-	T := EC.Add(comms, gv)
-	verifies := VerifyEquivalence(T, rtokens, EC.H, a.pki.Get(bank_i), rep.Eproof)
+	gv := ZKLedgerCurve.Neg(ZKLedgerCurve.Mult(ZKLedgerCurve.G, rep.Sum)) // 1 / g^\sum{v_i}
+	T := ZKLedgerCurve.Add(comms, gv)
+	// TODO: Error handling
+	verifies, _ := rep.Eproof.Verify(ZKLedgerCurve, T, rtokens, ZKLedgerCurve.H, a.pki.Get(bank_i))
 	if !verifies {
 		Dprintf("[A] Bank %v proof didn't verify! Their total: %v\n", bank_i, rep.Sum)
 		Dprintf("     My \\sum{rtks_i}: %v\n", rtokens)
@@ -198,8 +201,8 @@ func (a *Auditor) computeSum(bank_i int) (*big.Int, bool) {
 func (a *Auditor) sumOneBank(wg *sync.WaitGroup, bank_i int, totals []*big.Int, cache bool) {
 	var rep AuditRep
 	a.banks[bank_i].Audit(&struct{}{}, &rep)
-	comms := EC.Zero()
-	rtokens := EC.Zero()
+	comms := zksigma.Zero
+	rtokens := zksigma.Zero
 	if *useCache && cache {
 		comms = a.CommsCache[bank_i]
 		rtokens = a.RTokenCache[bank_i]
@@ -207,17 +210,18 @@ func (a *Auditor) sumOneBank(wg *sync.WaitGroup, bank_i int, totals []*big.Int, 
 		for i := 0; i < len(a.local_ledger.Transactions); i++ {
 			etx := &a.local_ledger.Transactions[i]
 			if etx.Type == Transfer {
-				comms = EC.Add(comms, etx.Entries[bank_i].Comm)
-				rtokens = EC.Add(rtokens, etx.Entries[bank_i].RToken)
+				comms = ZKLedgerCurve.Add(comms, etx.Entries[bank_i].Comm)
+				rtokens = ZKLedgerCurve.Add(rtokens, etx.Entries[bank_i].RToken)
 			} else if (etx.Type == Issuance || etx.Type == Withdrawal) && etx.Sender == bank_i {
-				gval := EC.G.Mult(etx.Entries[etx.Sender].V)
-				comms = EC.Add(comms, gval)
+				gval := ZKLedgerCurve.Mult(ZKLedgerCurve.G, etx.Entries[etx.Sender].V)
+				comms = ZKLedgerCurve.Add(comms, gval)
 			}
 		}
 	}
-	gv := EC.G.Mult(rep.Sum).Neg() // 1 / g^\sum{v_i}
-	T := EC.Add(comms, gv)
-	verifies := VerifyEquivalence(T, rtokens, EC.H, a.pki.Get(bank_i), rep.Eproof)
+	gv := ZKLedgerCurve.Neg(ZKLedgerCurve.Mult(ZKLedgerCurve.G, rep.Sum)) // 1 / g^\sum{v_i}
+	T := ZKLedgerCurve.Add(comms, gv)
+	// TODO: Error handling
+	verifies, _ := rep.Eproof.Verify(ZKLedgerCurve, T, rtokens, ZKLedgerCurve.H, a.pki.Get(bank_i))
 	if !verifies {
 		Dprintf("[A] Bank %v proof didn't verify! Their total: %v\n", bank_i, rep.Sum)
 		Dprintf("     My \\sum{rtks_i}: %v\n", rtokens)

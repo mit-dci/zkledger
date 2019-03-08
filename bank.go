@@ -9,6 +9,8 @@ import (
 	"net/rpc"
 	"sync"
 	"time"
+
+	"github.com/mit-dci/zksigma"
 )
 
 const (
@@ -50,8 +52,6 @@ type Bank struct {
 	pki *PKI
 	mu  *sync.Mutex
 
-	// My copy of the global ledger.  This will have *all*
-	// transactions in it, not just ones I was involved in.
 	local_ledger *LocalLedger
 
 	// Unencrypted versions of my sent and received transactions so I
@@ -60,14 +60,14 @@ type Bank struct {
 
 	// Running total of the sum of the commitments for everyone in all
 	// previous rows (this should be per asset)
-	CommsCache []ECPoint
+	CommsCache []zksigma.ECPoint
 
 	// Running total of my assets (this should be per asset)
 	ValueCache *big.Int
 
 	// Running total of the sum of the rtokens for everyone in all
 	// previous rows (this should be per asset)
-	RTokenCache []ECPoint
+	RTokenCache []zksigma.ECPoint
 
 	lastSeen     int
 	receivedTxns chan *EncryptedTransaction
@@ -94,11 +94,11 @@ func MakeBank(id int, num int, l LedgerClient, pki *PKI) *Bank {
 		transactions:  make(map[int]*Transaction),
 		ledger:        l,
 		Done:          make(chan bool),
-		CommsCache:    make([]ECPoint, num),
+		CommsCache:    make([]zksigma.ECPoint, num),
 		lastSeen:      -1,
 		receivedTxns:  make(chan *EncryptedTransaction, TXN_BUFFER),
 		ValueCache:    big.NewInt(0), // TODO: Add initial assets to banks
-		RTokenCache:   make([]ECPoint, num),
+		RTokenCache:   make([]zksigma.ECPoint, num),
 		Inflight:      make(map[int]chan struct{}),
 		Setup:         make(chan struct{}),
 		Waiter:        make(chan struct{}),
@@ -109,8 +109,8 @@ func MakeBank(id int, num int, l LedgerClient, pki *PKI) *Bank {
 	close(c)
 
 	for i := 0; i < num; i++ {
-		b.CommsCache[i] = ECPoint{big.NewInt(0), big.NewInt(0)}
-		b.RTokenCache[i] = ECPoint{big.NewInt(0), big.NewInt(0)}
+		b.CommsCache[i] = zksigma.Zero
+		b.RTokenCache[i] = zksigma.Zero
 	}
 	go b.start()
 	return b
@@ -250,7 +250,7 @@ func (b *Bank) print_transactions() {
 type StoreArgs struct {
 	TS time.Time
 	I  int
-	C  ECPoint
+	C  zksigma.ECPoint
 	S  int
 	Re int
 	V  big.Int
@@ -276,7 +276,7 @@ func (b *Bank) Store(req *StoreArgs, _ *struct{}) error {
 }
 
 // Add a transaction I've either sent or received to my store.  Should hold mu
-func (b *Bank) store_locally(ts time.Time, index int, comm ECPoint, sender int, receiver int, value *big.Int, r *big.Int) error {
+func (b *Bank) store_locally(ts time.Time, index int, comm zksigma.ECPoint, sender int, receiver int, value *big.Int, r *big.Int) error {
 	if *emptyTxn {
 		return nil
 	}
@@ -328,9 +328,12 @@ func (b *Bank) Issue(value *big.Int, _ *struct{}) *EncryptedTransaction {
 	etx.Entries = make([]Entry, b.num)
 	etx.Entries[b.id].V = value
 	etx.TS = time.Now()
-	g := GSPFS{curve: EC.C, ExponentPrime: EC.N, Generator: EC.H}
 	// TODO: Use a proof of the issuer
-	proof := g.Prove(b.pki.Get(len(b.banks)), b.pki.GetSK(len(b.banks))) // use the key of the issuer in order to create a new issuance
+	// TODO: Error handling
+	proof, err := zksigma.NewGSPFSProofBase(ZKLedgerCurve, ZKLedgerCurve.H, b.pki.Get(len(b.banks)), b.pki.GetSK(len(b.banks))) // use the key of the issuer in order to create a new issuance
+	if err != nil {
+		log.Fatalf("Error creating SKProof for issue: %s", err.Error())
+	}
 	etx.Entries[b.id].SKProof = proof
 	b.mu.Lock()
 	b.store_locally(etx.TS, etx.Index, etx.Entries[b.id].Comm, b.id, -1, value, nil)
@@ -363,8 +366,8 @@ func (b *Bank) Withdraw(value *big.Int, _ *struct{}) *EncryptedTransaction {
 	etx.Entries = make([]Entry, b.num)
 	etx.Entries[b.id].V = value
 	etx.TS = time.Now()
-	g := GSPFS{curve: EC.C, ExponentPrime: EC.N, Generator: EC.H}
-	proof := g.Prove(b.pki.Get(b.id), b.pki.GetSK(b.id))
+	// TODO: Error handling
+	proof, _ := zksigma.NewGSPFSProofBase(ZKLedgerCurve, ZKLedgerCurve.H, b.pki.Get(b.id), b.pki.GetSK(b.id))
 	etx.Entries[b.id].SKProof = proof
 	b.mu.Lock()
 	b.store_locally(etx.TS, etx.Index, etx.Entries[b.id].Comm, b.id, -1, value, nil)
@@ -385,9 +388,11 @@ func generateRangeProofs(num int, etx *EncryptedTransaction, bank_j int, id int,
 		if i == id {
 			continue
 		} else if i == bank_j {
-			etx.Entries[i].RP, etx.Entries[i].BAuxR = RangeProverProve(value)
+			// TODO: Error handling
+			etx.Entries[i].RP, etx.Entries[i].BAuxR, _ = zksigma.NewRangeProof(ZKLedgerCurve, value)
 		} else {
-			etx.Entries[i].RP, etx.Entries[i].BAuxR = RangeProverProve(big.NewInt(0))
+			// TODO: Error handling
+			etx.Entries[i].RP, etx.Entries[i].BAuxR, _ = zksigma.NewRangeProof(ZKLedgerCurve, big.NewInt(0))
 		}
 	}
 }
@@ -466,14 +471,12 @@ func (b *Bank) createLocal(etx *EncryptedTransaction, bank_j int, value *big.Int
 	var myR *big.Int
 	var theirR *big.Int
 	var tmpR *big.Int
-	var commaux ECPoint
+	var commaux zksigma.ECPoint
 	var rp *big.Int
-	var rtoken ECPoint
-	var baux ECPoint
+	var rtoken zksigma.ECPoint
+	var baux zksigma.ECPoint
 	vn := new(big.Int).Neg(value)
 	totalR := big.NewInt(0)
-	//gsp := GSPFS{curve: EC.C, ExponentPrime: EC.N, Generator: EC.H}
-	pc := ECPedersen{EC.C, EC.G, EC.H}
 	etx.Sender = b.id     // testing
 	etx.Receiver = bank_j // testing
 
@@ -490,100 +493,108 @@ func (b *Bank) createLocal(etx *EncryptedTransaction, bank_j int, value *big.Int
 			// we want all commitments to add up to identity of group, so we choose
 			// the last randomness to be N-sumSoFar
 			if i == b.num-1 {
-				theirR = new(big.Int).Sub(EC.N, totalR)
-				theirR.Mod(theirR, EC.N)
-				etx.Entries[i].Comm = pc.CommitWithR(value, theirR)
+				theirR = new(big.Int).Sub(ZKLedgerCurve.C.Params().N, totalR)
+				theirR.Mod(theirR, ZKLedgerCurve.C.Params().N)
+				etx.Entries[i].Comm = zksigma.PedCommitR(ZKLedgerCurve, value, theirR)
 				//fmt.Println("Last entry in TX", b.num)
 			} else {
-				etx.Entries[i].Comm, theirR = pc.Commit(value)
+				// TODO: Error handling
+				etx.Entries[i].Comm, theirR, _ = zksigma.PedCommit(ZKLedgerCurve, value)
 			}
 
 			etx.Entries[i].V = value  // testing
 			etx.Entries[i].R = theirR // testing
 			tmpR = theirR
-			rtoken = EC.CommitR(b.pki.Get(i), tmpR)
+			rtoken = zksigma.CommitR(ZKLedgerCurve, b.pki.Get(i), tmpR)
 
 			// Range Proof to get randomness value to use
 			if !*rpOutside {
-				etx.Entries[i].RP, rp = RangeProverProve(value)
+				// TODO: Error Handling
+				etx.Entries[i].RP, rp, _ = zksigma.NewRangeProof(ZKLedgerCurve, value)
 			} else {
 				// Otherwise, Range Proof done before
 				rp = etx.Entries[i].BAuxR
 			}
 			// cm_{aux,i} ~ cm
-			commaux = pc.CommitWithR(value, rp)
+			commaux = zksigma.PedCommitR(ZKLedgerCurve, value, rp)
 			etx.Entries[i].CommAux = commaux
-			baux = EC.CommitR(b.pki.Get(i), rp)
+			baux = zksigma.CommitR(ZKLedgerCurve, b.pki.Get(i), rp)
 			rpmr := new(big.Int).Sub(rp, theirR)
-			rpmr.Mod(rpmr, EC.N)
+			rpmr.Mod(rpmr, ZKLedgerCurve.C.Params().N)
 
 			// items for simulated proof
 			b.mu.Lock()
-			SA := b.CommsCache[i].Add(etx.Entries[i].Comm)
-			SB := b.RTokenCache[i].Add(rtoken)
+			SA := ZKLedgerCurve.Add(b.CommsCache[i], etx.Entries[i].Comm)
+			SB := ZKLedgerCurve.Add(b.RTokenCache[i], rtoken)
 			b.mu.Unlock()
-			Base1 := commaux.Add(SA.Neg()) // Base1 = CommAux - (\Sum_{i=0}^{n-1} CM_i + CM_n)
-			Result1 := baux.Add(SB.Neg())  // Result1 = Baux - SB
-			Result2 := commaux.Add(etx.Entries[i].Comm.Neg())
+			Base1 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(SA)) // Base1 = CommAux - (\Sum_{i=0}^{n-1} CM_i + CM_n)
+			Result1 := ZKLedgerCurve.Add(baux, ZKLedgerCurve.Neg(SB))  // Result1 = Baux - SB
+			Result2 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(etx.Entries[i].Comm))
 
-			etx.Entries[i].Assets = ProveDisjunctive(Base1, Result1, EC.H, Result2, rpmr, 1)
-			etx.Entries[i].CommConsistency = ProveConsistency(etx.Entries[i].Comm, rtoken, b.pki.Get(bank_j), value, tmpR)
-			etx.Entries[i].AuxConsistency = ProveConsistency(commaux, baux, b.pki.Get(bank_j), value, rp)
+			// TODO: Error handling
+			etx.Entries[i].Assets, _ = zksigma.NewDisjunctiveProof(ZKLedgerCurve, Base1, Result1, ZKLedgerCurve.H, Result2, rpmr, 1)
+			etx.Entries[i].CommConsistency, _ = zksigma.NewConsistencyProof(ZKLedgerCurve, etx.Entries[i].Comm, rtoken, b.pki.Get(bank_j), value, tmpR)
+			etx.Entries[i].AuxConsistency, _ = zksigma.NewConsistencyProof(ZKLedgerCurve, commaux, baux, b.pki.Get(bank_j), value, rp)
 		} else if i == b.id {
 			// Commit to negative value
 			if i == b.num-1 {
-				myR = new(big.Int).Sub(EC.N, totalR)
-				myR.Mod(myR, EC.N)
-				etx.Entries[i].Comm = pc.CommitWithR(vn, myR)
+				myR = new(big.Int).Sub(ZKLedgerCurve.C.Params().N, totalR)
+				myR.Mod(myR, ZKLedgerCurve.C.Params().N)
+				etx.Entries[i].Comm = zksigma.PedCommitR(ZKLedgerCurve, vn, myR)
 
 				//fmt.Println("Last entry in TX", b.num)
 			} else {
-				etx.Entries[i].Comm, myR = pc.Commit(vn)
+				// TODO: Error handling
+				etx.Entries[i].Comm, myR, _ = zksigma.PedCommit(ZKLedgerCurve, vn)
 			}
 			etx.Entries[i].V = vn  // testing
 			etx.Entries[i].R = myR // testing
 			tmpR = myR
-			rtoken = EC.CommitR(b.pki.Get(i), tmpR)
+			rtoken = zksigma.CommitR(ZKLedgerCurve, b.pki.Get(i), tmpR)
 			b.mu.Lock()
 			sum := new(big.Int).Add(vn, b.ValueCache)
 			b.mu.Unlock()
-			etx.Entries[i].RP, rp = RangeProverProve(sum)
+			// TODO: Error Handling
+			etx.Entries[i].RP, rp, _ = zksigma.NewRangeProof(ZKLedgerCurve, sum)
 
-			baux = EC.CommitR(b.pki.Get(i), rp)
+			baux = zksigma.CommitR(ZKLedgerCurve, b.pki.Get(i), rp)
 			b.mu.Lock()
 			// I shouldn't even be here unless the local data
 			// structures have been updated from the n-1th
 			// transaction, because I should have been stuck in the wait()
 
-			SA := b.CommsCache[i].Add(etx.Entries[i].Comm) // SA = n-1 sum + curSum
-			SB := b.RTokenCache[i].Add(rtoken)             //SB = n-1 sum + current rtoken
+			SA := ZKLedgerCurve.Add(b.CommsCache[i], etx.Entries[i].Comm) // SA = n-1 sum + curSum
+			SB := ZKLedgerCurve.Add(b.RTokenCache[i], rtoken)             //SB = n-1 sum + current rtoken
 			b.mu.Unlock()
 
-			commaux = pc.CommitWithR(sum, rp)
+			commaux = zksigma.PedCommitR(ZKLedgerCurve, sum, rp)
 			etx.Entries[i].CommAux = commaux
-			Base1 := commaux.Add(SA.Neg())
-			Result1 := baux.Add(SB.Neg()) // Result1 = commaux - (sum of entries)
-			Result2 := commaux.Add(etx.Entries[i].Comm.Neg())
+			Base1 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(SA))
+			Result1 := ZKLedgerCurve.Add(baux, ZKLedgerCurve.Neg(SB)) // Result1 = commaux - (sum of entries)
+			Result2 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(etx.Entries[i].Comm))
 
-			etx.Entries[i].Assets = ProveDisjunctive(Base1, Result1, EC.H, Result2, b.pki.GetSK(b.id), 0)
-			etx.Entries[i].CommConsistency = ProveConsistency(etx.Entries[i].Comm, rtoken, b.pki.Get(i), vn, tmpR)
-			etx.Entries[i].AuxConsistency = ProveConsistency(commaux, baux, b.pki.Get(i), sum, rp)
+			// TODO: Error handling
+			etx.Entries[i].Assets, _ = zksigma.NewDisjunctiveProof(ZKLedgerCurve, Base1, Result1, ZKLedgerCurve.H, Result2, b.pki.GetSK(b.id), 0)
+			etx.Entries[i].CommConsistency, _ = zksigma.NewConsistencyProof(ZKLedgerCurve, etx.Entries[i].Comm, rtoken, b.pki.Get(i), vn, tmpR)
+			etx.Entries[i].AuxConsistency, _ = zksigma.NewConsistencyProof(ZKLedgerCurve, commaux, baux, b.pki.Get(i), sum, rp)
 		} else {
 			// Commit to 0
 			if i == b.num-1 {
-				tmpR = new(big.Int).Sub(EC.N, totalR)
-				tmpR.Mod(tmpR, EC.N)
-				etx.Entries[i].Comm = pc.CommitWithR(big.NewInt(0), tmpR)
+				tmpR = new(big.Int).Sub(ZKLedgerCurve.C.Params().N, totalR)
+				tmpR.Mod(tmpR, ZKLedgerCurve.C.Params().N)
+				etx.Entries[i].Comm = zksigma.PedCommitR(ZKLedgerCurve, big.NewInt(0), tmpR)
 				//fmt.Println("Last entry in TX", b.num)
 			} else {
-				etx.Entries[i].Comm, tmpR = pc.Commit(big.NewInt(0))
+				// TODO: Error Handling
+				etx.Entries[i].Comm, tmpR, _ = zksigma.PedCommit(ZKLedgerCurve, big.NewInt(0))
 			}
 
 			etx.Entries[i].V = big.NewInt(0) // testing
 			etx.Entries[i].R = tmpR          // testing
 
 			if !*rpOutside {
-				etx.Entries[i].RP, rp = RangeProverProve(big.NewInt(0))
+				// TODO: Error Handling
+				etx.Entries[i].RP, rp, _ = zksigma.NewRangeProof(ZKLedgerCurve, big.NewInt(0))
 			} else {
 				// Otherwise, Range Proof done before
 				rp = etx.Entries[i].BAuxR
@@ -592,24 +603,25 @@ func (b *Bank) createLocal(etx *EncryptedTransaction, bank_j int, value *big.Int
 				panic("rp is null")
 			}
 			// cm_{aux,i} ~ cm
-			commaux = pc.CommitWithR(big.NewInt(0), rp)
+			commaux = zksigma.PedCommitR(ZKLedgerCurve, big.NewInt(0), rp)
 			etx.Entries[i].CommAux = commaux
-			rtoken = EC.CommitR(b.pki.Get(i), tmpR)
-			baux = EC.CommitR(b.pki.Get(i), rp)
+			rtoken = zksigma.CommitR(ZKLedgerCurve, b.pki.Get(i), tmpR)
+			baux = zksigma.CommitR(ZKLedgerCurve, b.pki.Get(i), rp)
 			rpmr := new(big.Int).Sub(rp, tmpR)
-			rpmr.Mod(rpmr, EC.N)
+			rpmr.Mod(rpmr, ZKLedgerCurve.C.Params().N)
 
 			b.mu.Lock()
-			SA := b.CommsCache[i].Add(etx.Entries[i].Comm)
-			SB := b.RTokenCache[i].Add(rtoken)
+			SA := ZKLedgerCurve.Add(b.CommsCache[i], etx.Entries[i].Comm)
+			SB := ZKLedgerCurve.Add(b.RTokenCache[i], rtoken)
 			b.mu.Unlock()
-			Base1 := commaux.Add(SA.Neg())
-			Result1 := baux.Add(SB.Neg())
-			Result2 := commaux.Add(etx.Entries[i].Comm.Neg())
+			Base1 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(SA))
+			Result1 := ZKLedgerCurve.Add(baux, ZKLedgerCurve.Neg(SB))
+			Result2 := ZKLedgerCurve.Add(commaux, ZKLedgerCurve.Neg(etx.Entries[i].Comm))
 
-			etx.Entries[i].Assets = ProveDisjunctive(Base1, Result1, EC.H, Result2, rpmr, 1)
-			etx.Entries[i].CommConsistency = ProveConsistency(etx.Entries[i].Comm, rtoken, b.pki.Get(i), big.NewInt(0), tmpR)
-			etx.Entries[i].AuxConsistency = ProveConsistency(commaux, baux, b.pki.Get(i), big.NewInt(0), rp)
+			// TODO: Error handling
+			etx.Entries[i].Assets, _ = zksigma.NewDisjunctiveProof(ZKLedgerCurve, Base1, Result1, ZKLedgerCurve.H, Result2, rpmr, 1)
+			etx.Entries[i].CommConsistency, _ = zksigma.NewConsistencyProof(ZKLedgerCurve, etx.Entries[i].Comm, rtoken, b.pki.Get(i), big.NewInt(0), tmpR)
+			etx.Entries[i].AuxConsistency, _ = zksigma.NewConsistencyProof(ZKLedgerCurve, commaux, baux, b.pki.Get(i), big.NewInt(0), rp)
 		}
 		totalR = totalR.Add(totalR, tmpR)
 		etx.Entries[i].RToken = rtoken
@@ -653,8 +665,8 @@ func (b *Bank) updateLocalData(etx *EncryptedTransaction) {
 		b.local_ledger.add(etx)
 		if etx.Type == Transfer {
 			for i := 0; i < b.num; i++ {
-				b.RTokenCache[i] = b.RTokenCache[i].Add(etx.Entries[i].RToken)
-				b.CommsCache[i] = EC.Add(b.CommsCache[i], etx.Entries[i].Comm)
+				b.RTokenCache[i] = ZKLedgerCurve.Add(b.RTokenCache[i], etx.Entries[i].RToken)
+				b.CommsCache[i] = ZKLedgerCurve.Add(b.CommsCache[i], etx.Entries[i].Comm)
 			}
 			req, ok := b.StoreRequests[etx.Index]
 			if !ok {
@@ -665,8 +677,8 @@ func (b *Bank) updateLocalData(etx *EncryptedTransaction) {
 		} else if etx.Type == Issuance || etx.Type == Withdrawal {
 			// Only one bank
 			en := &etx.Entries[etx.Sender]
-			gval := EC.G.Mult(en.V)
-			b.CommsCache[etx.Sender] = EC.Add(b.CommsCache[etx.Sender], gval)
+			gval := ZKLedgerCurve.Mult(ZKLedgerCurve.G, en.V)
+			b.CommsCache[etx.Sender] = ZKLedgerCurve.Add(b.CommsCache[etx.Sender], gval)
 		}
 	}
 	// Processed transaction etx.Index, signal whoever might be waiting for it.
@@ -694,7 +706,7 @@ func (b *Bank) updateLocalData(etx *EncryptedTransaction) {
 
 type AuditRep struct {
 	Sum    *big.Int
-	Eproof EquivProof
+	Eproof *zksigma.EquivalenceProof
 }
 
 func (b *Bank) Audit(a *struct{}, rep *AuditRep) error {
@@ -707,7 +719,7 @@ type ComplexReq struct {
 }
 
 type ComplexRep struct {
-	Recommitments []ECPoint
+	Recommitments []zksigma.ECPoint
 }
 
 func (b *Bank) ComplexAudit(req *ComplexReq, rep *ComplexRep) error {
@@ -727,11 +739,11 @@ func (b *Bank) ComplexAudit(req *ComplexReq, rep *ComplexRep) error {
 	return nil
 }
 
-func (b *Bank) answerSum() (*big.Int, EquivProof) {
+func (b *Bank) answerSum() (*big.Int, *zksigma.EquivalenceProof) {
 	b.mu.Lock()
 	// return total quantity of asset, plus proof of knowledge
-	total_comms := EC.Zero()          // Will be g^\sum{v_i}*h^\sum{r_i}
-	total_rtoken := EC.Zero()         // Will be h^\sum{r_i}^sk
+	total_comms := zksigma.Zero       // Will be g^\sum{v_i}*h^\sum{r_i}
+	total_rtoken := zksigma.Zero      // Will be h^\sum{r_i}^sk
 	total_clear := b.answerClearSum() // \sum{v_i}
 	if *useCache {
 		total_comms = b.CommsCache[b.id]
@@ -740,25 +752,26 @@ func (b *Bank) answerSum() (*big.Int, EquivProof) {
 		for i := 0; i < len(b.local_ledger.Transactions); i++ {
 			etx := &b.local_ledger.Transactions[i]
 			if etx.Type == Transfer {
-				total_comms = EC.Add(total_comms, etx.Entries[b.id].Comm)
-				total_rtoken = EC.Add(total_rtoken, etx.Entries[b.id].RToken)
+				total_comms = ZKLedgerCurve.Add(total_comms, etx.Entries[b.id].Comm)
+				total_rtoken = ZKLedgerCurve.Add(total_rtoken, etx.Entries[b.id].RToken)
 			} else if (etx.Type == Issuance || etx.Type == Withdrawal) && etx.Sender == b.id {
-				gval := EC.G.Mult(etx.Entries[etx.Sender].V)
-				total_comms = EC.Add(total_comms, gval)
+				gval := ZKLedgerCurve.Mult(ZKLedgerCurve.G, etx.Entries[etx.Sender].V)
+				total_comms = ZKLedgerCurve.Add(total_comms, gval)
 			}
 		}
 	}
 	b.print_transactions()
 	b.mu.Unlock()
-	gv := EC.G.Mult(total_clear).Neg() // 1 / g^\sum{v_i}
-	T := EC.Add(total_comms, gv)       // should be h^r
+	gv := ZKLedgerCurve.Neg(ZKLedgerCurve.Mult(ZKLedgerCurve.G, total_clear)) // 1 / g^\sum{v_i}
+	T := ZKLedgerCurve.Add(total_comms, gv)                                   // should be h^r
 	Dprintf("[%v]  Audit:\n", b.id)
 	Dprintf("[%v]       \\sum{v_i}: %v\n", b.id, total_clear)
 	Dprintf("[%v]  1 /g^\\sum{v_i}: %v\n", b.id, gv)
 	Dprintf("[%v]   \\sum{comms_i}: %v\n", b.id, total_comms)
 	Dprintf("[%v]     \\sum{rtk_i}: %v\n", b.id, total_rtoken)
 	Dprintf("[%v]              T: %v\n", b.id, T)
-	eproof := ProveEquivalence(T, total_rtoken, EC.H, b.pki.Get(b.id), b.pki.GetSK(b.id))
+	// TODO: Error Handling
+	eproof, _ := zksigma.NewEquivalenceProof(ZKLedgerCurve, T, total_rtoken, ZKLedgerCurve.H, b.pki.Get(b.id), b.pki.GetSK(b.id))
 	return total_clear, eproof
 }
 

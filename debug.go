@@ -12,3 +12,9 @@ func Dprintf(format string, args ...interface{}) {
 		fmt.Printf(format, args...)
 	}
 }
+
+func check(e error) {
+	if e != nil {
+		panic(e)
+	}
+}
